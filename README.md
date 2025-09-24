@@ -14,27 +14,24 @@ Given a 4-column CSV (age + 3 series), the pipeline smooths the records, estimat
 ## Install
 
 ```bash
-# Dev install (recommended while iterating)
-pip install -e .
+git clone https://github.com/<ton-org-ou-user>/rsthresh.git
+cd rsthresh
 
-# Or with conda (example)
 conda create -n rsthresh python=3.11 -y
 conda activate rsthresh
-pip install -e .
 
+pip install -e .
+```
 ---
 
 ## Input format
 
 CSV with exactly 4 columns (positional mapping):
 
-age (ka BP, increasing)
-
-target (series to segment into weak/strong regimes)
-
-x (first forcing/axis for KDE)
-
-y (second forcing/axis for KDE)
+- age (ka BP, increasing)
+- target (series to segment into weak/strong regimes)
+- x (first forcing/axis for KDE)
+- y (second forcing/axis for KDE)
 
 Column names can be anything (e.g., age, ISOWhybrid, CO2, RSL), the mapping is by position.
 Age must be numeric and monotonic after sorting.
@@ -42,6 +39,10 @@ Age must be numeric and monotonic after sorting.
 ---
 
 ## Quickstart
+
+An example is given in the examples/ repository. Find below a basic use of the algorithm.
+
+```python
 from pathlib import Path
 from rsthresh import ThresholdDetector
 from rsthresh.plotting import plot_summary
@@ -51,11 +52,11 @@ det = (ThresholdDetector(
           smooth_method="spline",   # "spline" | "lowpass" | "ma"
           spline_s="auto",          # for "spline": "auto" (=N) or a float
           lp_cutoff_ka=20.0,        # for "lowpass": keep > 20 ka
-          ma_window_ka=20.0,        # for "ma": centered window (ka)
+          ma_window_ka=10.0,        # for "ma": centered window (ka)
           persist_ka=4.0,
           search_window_ka=4.0,
           sigma_window_ka=40.0,     # amplitude gate window (ka)
-          min_delta_sigma=0.9,      # gate: |Δ| ≥ k·σ_local
+          min_delta_sigma=0.9,      # gate: 0.7 - 1.2 recommended
       )
       .load_csv(Path("examples/data.csv"))
       .resample_and_smooth()
@@ -66,67 +67,58 @@ det = (ThresholdDetector(
 plot_summary(det, figpath="outputs/thresholds_summary.svg", show_mode=True)
 det.results.transitions.to_csv("outputs/transitions.csv", index=False)
 det.save_report("outputs/threshold_report.json")
-
+```
 ---
 
 ## Outputs
 
-outputs/Figures/thresholds_summary.svg — (a) smoothed target + separator + timings; (b) derivative + timings; (c) x–y KDE isodensity.
-
-outputs/Results/transitions.csv — timing and direction (up=weak→strong, down=strong→weak), plus x/y at each transition.
-
-outputs/Reports/threshold_report.json — params, counts, ranges, and metadata.
+- outputs/Figures/thresholds_summary.svg — (a) smoothed target + separator + timings; (b) derivative + timings; (c) x–y KDE isodensity.
+- outputs/Results/transitions.csv — timing and direction (up=weak→strong, down=strong→weak), plus x/y at each transition.
+- outputs/Reports/threshold_report.json — params, counts, ranges, and metadata.
 
 ---
 
-## Smoothing options (long-term only)
+## Smoothing options
 
 Choose one method for all three series (target/x/y):
 
-Spline: smooth_method="spline", spline_s="auto" (default; very smooth, great for G–IG).
-
-Low-pass Butterworth: smooth_method="lowpass", lp_cutoff_ka=20.0 (keeps periods > 20 ka; zero-phase).
-
-Moving Average: smooth_method="ma", ma_window_ka=20.0 (intuitive GLT-like look).
-
-Derivatives are computed on the smoothed curve (spline re-fit interpolating when using lowpass/MA).
+- **Spline**: smooth_method="spline", spline_s="auto" (default; very smooth, great for G–IG).
+- **Low-pass Butterworth**: smooth_method="lowpass", lp_cutoff_ka=20.0 (keeps periods > 20 ka; zero-phase).
+- **Moving Average**: smooth_method="ma", ma_window_ka=20.0 (intuitive GLT-like look). 
+- 
+- Derivatives are computed on the smoothed curve (spline re-fit interpolating when using lowpass/MA).
 
 ---
 
 ## Separator methods
 
-"gmm" (default): 2-component Gaussian Mixture; separator = density valley between component means.
+Choose one method to define the separator between the two "modes" of your target record.
 
-"kde": 1D KDE; separator = minimum between the two dominant modes (fallback to median).
+- **"gmm"** (default): 2-component Gaussian Mixture; separator = density valley between component means.
+- **"kde"**: 1D KDE; separator = minimum between the two dominant modes (fallback to median).
+- **"otsu"**: Otsu’s histogram threshold (max inter-class variance).
+- **"quantile"**: separator = quantile(y, q) (default q=0.5).
+- **"fixed"**: user-provided S.
 
-"otsu": Otsu’s histogram threshold (max inter-class variance).
-
-"quantile": separator = quantile(y, q) (default q=0.5).
-
-"fixed": user-provided S.
-
-```
+```python
 det.estimate_separator(method="fixed", S=0.12)
 det.estimate_separator(method="quantile", q=0.55)
-
+```
 ---
 
 ## Key parameters (typical G–IG settings)
 
-dt_ka=1.0 — resampling step (ka).
+Additionnal parameters can be modified.
 
-persist_ka=4.0 — state persistence window (ka) to suppress flicker.
+- dt_ka=1.0 — resampling step (ka).
+- persist_ka=4.0 — state persistence window (ka) to suppress flicker.
+- search_window_ka=4.0 — half-window around crossing to pick timing at max |d(target)/dt|.
+- sigma_window_ka=40.0 — window (ka) to compute local σ for amplitude gating.
+- min_delta_sigma=0.9 — non-dimensional amplitude gate; increase for stricter transitions.
+- kde_bandwidth="scott" — KDE bandwidth rule (or a scalar factor).
 
-search_window_ka=4.0 — half-window around crossing to pick timing at max |d(target)/dt|.
-
-sigma_window_ka=40.0 — window (ka) to compute local σ for amplitude gating.
-
-min_delta_sigma=0.9 — non-dimensional amplitude gate; increase for stricter transitions.
-
-kde_bandwidth="scott" — KDE bandwidth rule (or a scalar factor).
-
-If you get too few transitions → lower min_delta_sigma or persist_ka, or reduce sigma_window_ka.
-If you get too many → increase them.
+If you get too few transitions -> lower min_delta_sigma or persist_ka, or reduce sigma_window_ka.
+If you get too many -> increase them.
 
 ---
 
@@ -134,19 +126,21 @@ If you get too many → increase them.
 
 All steps log useful info (loaded rows, smoothing choice, separator value, number of transitions, KDE status).
 You can pass your own logger:
-```
+```python
 det = ThresholdDetector(logger=my_logger, ...)
-
+```
 ---
 
 ## Tests
 
 A minimal pytest smoke test is included:
-```
+```python
 from rsthresh import __version__
+```
+Please cite this code using the CITATION.cff in the repository.
 
-Please cite using the CITATION.cff in the repository (GitHub shows a “Cite this repository” button).
-If you archive releases on Zenodo, add the DOI there.
+If you use this code in scientific articles, please cite the original study:
+~***incoming***~
 
 ---
 
