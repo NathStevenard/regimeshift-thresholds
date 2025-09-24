@@ -1,0 +1,21 @@
+cff-version: 1.2.0
+title: regimeshift-thresholds
+message: "If you use this software, please cite it as below."
+type: software
+authors:
+  - family-names: Stevenard
+    given-names: Nathan
+    orcid: "https://orcid.org/0000-0002-1838-9291"
+version: 0.1.0
+date-released: 2025-09-24
+repository-code: "https://github.com/<user>/regimeshift-thresholds"
+license: MIT
+keywords: [climate, paleoclimate, regime shifts, thresholds, KDE]
+preferred-citation:
+  type: software
+  authors:
+    - family-names: Stevenard
+      given-names: Nathan
+  title: regimeshift-thresholds
+  version: 0.1.0
+  doi: tofillafterpublication

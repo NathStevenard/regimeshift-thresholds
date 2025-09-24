@@ -1,0 +1,43 @@
+cat > .gitignore << 'EOF'
+# ---- Python ----
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.so
+*.dll
+
+# Environments / venv
+.venv/
+venv/
+.env
+.env.*
+
+# Tools / cache
+.ipynb_checkpoints/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.pylint.d/
+.coverage
+htmlcov/
+
+# Build / packaging
+build/
+dist/
+*.egg-info/
+
+# Editors / OS
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
+
+# Project rsthresh
+outputs/
+*.svg
+*.png
+
+# Logs
+*.log
+EOF
