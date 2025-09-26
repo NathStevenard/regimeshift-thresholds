@@ -8,7 +8,7 @@ authors:
     orcid: "https://orcid.org/0000-0002-1838-9291"
 version: 0.1.0
 date-released: 2025-09-24
-repository-code: "https://github.com/<user>/regimeshift-thresholds"
+repository-code: "https://github.com/NathStevenard/regimeshift-thresholds"
 license: MIT
 keywords: [climate, paleoclimate, regime shifts, thresholds, KDE]
 preferred-citation:
@@ -18,4 +18,4 @@ preferred-citation:
       given-names: Nathan
   title: regimeshift-thresholds
   version: 0.1.0
-  doi: tofillafterpublication
+  doi: to-fill-after-publication

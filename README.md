@@ -9,12 +9,10 @@ Given a 4-column CSV (age + 3 series), the pipeline smooths the records, estimat
 - **KDE isodensity** contours for threshold windows (e.g., CO₂–RSL)
 - Clean logs + JSON/CSV/SVG outputs
 
----
-
 ## Install
 
 ```bash
-git clone https://github.com/<ton-org-ou-user>/rsthresh.git
+git clone https://github.com/NathStevenard/regimeshift-thresholds
 cd rsthresh
 
 conda create -n rsthresh python=3.11 -y
@@ -22,7 +20,6 @@ conda activate rsthresh
 
 pip install -e .
 ```
----
 
 ## Input format
 
@@ -35,8 +32,6 @@ CSV with exactly 4 columns (positional mapping):
 
 Column names can be anything (e.g., age, ISOWhybrid, CO2, RSL), the mapping is by position.
 Age must be numeric and monotonic after sorting.
-
----
 
 ## Quickstart
 
@@ -68,15 +63,29 @@ plot_summary(det, figpath="outputs/thresholds_summary.svg", show_mode=True)
 det.results.transitions.to_csv("outputs/transitions.csv", index=False)
 det.save_report("outputs/threshold_report.json")
 ```
----
 
 ## Outputs
 
-- outputs/Figures/thresholds_summary.svg — (a) smoothed target + separator + timings; (b) derivative + timings; (c) x–y KDE isodensity.
-- outputs/Results/transitions.csv — timing and direction (up=weak→strong, down=strong→weak), plus x/y at each transition.
-- outputs/Reports/threshold_report.json — params, counts, ranges, and metadata.
+Three outputs are exported.
 
----
+- **Transition table**
+```markdown
+outputs/
+└── Results/
+    └── transitions.csv        # timing and direction (up=weak-strong, down=strong-weak), plus x/y at each transition.
+```
+- **Report**
+```markdown
+outputs/
+└── Reports/
+    └── threshold_report_spline_<datetime>.json         # params, counts, ranges, and metadata.
+```
+- **Figure**
+```markdown
+outputs/
+└── Figures/
+    └── thresholds_summary_<datetime>.svg   # smoothed target + separator + timings; derivative + timings; x–y KDE isodensity.
+```
 
 ## Smoothing options
 
@@ -84,11 +93,9 @@ Choose one method for all three series (target/x/y):
 
 - **Spline**: smooth_method="spline", spline_s="auto" (default; very smooth, great for G–IG).
 - **Low-pass Butterworth**: smooth_method="lowpass", lp_cutoff_ka=20.0 (keeps periods > 20 ka; zero-phase).
-- **Moving Average**: smooth_method="ma", ma_window_ka=20.0 (intuitive GLT-like look). 
-- 
-- Derivatives are computed on the smoothed curve (spline re-fit interpolating when using lowpass/MA).
+- **Moving Average**: smooth_method="ma", ma_window_ka=20.0 (intuitive GLT-like look).
 
----
+Derivatives are computed on the smoothed curve (spline re-fit interpolating when using lowpass/MA).
 
 ## Separator methods
 
@@ -104,7 +111,6 @@ Choose one method to define the separator between the two "modes" of your target
 det.estimate_separator(method="fixed", S=0.12)
 det.estimate_separator(method="quantile", q=0.55)
 ```
----
 
 ## Key parameters (typical G–IG settings)
 
@@ -120,8 +126,6 @@ Additionnal parameters can be modified.
 If you get too few transitions -> lower min_delta_sigma or persist_ka, or reduce sigma_window_ka.
 If you get too many -> increase them.
 
----
-
 ## Logging
 
 All steps log useful info (loaded rows, smoothing choice, separator value, number of transitions, KDE status).
@@ -129,7 +133,6 @@ You can pass your own logger:
 ```python
 det = ThresholdDetector(logger=my_logger, ...)
 ```
----
 
 ## Tests
 
@@ -140,7 +143,7 @@ from rsthresh import __version__
 Please cite this code using the CITATION.cff in the repository.
 
 If you use this code in scientific articles, please cite the original study:
-~***incoming***~
+***incoming***
 
 ---
 
