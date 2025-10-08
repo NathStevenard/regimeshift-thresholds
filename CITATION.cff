@@ -6,7 +6,7 @@ authors:
   - family-names: Stevenard
     given-names: Nathan
     orcid: "https://orcid.org/0000-0002-1838-9291"
-version: 0.1.0
+version: 1.1
 date-released: 2025-09-24
 repository-code: "https://github.com/NathStevenard/regimeshift-thresholds"
 license: MIT
@@ -17,5 +17,5 @@ preferred-citation:
     - family-names: Stevenard
       given-names: Nathan
   title: regimeshift-thresholds
-  version: 0.1.0
+  version: 1.1
   doi: to-fill-after-publication

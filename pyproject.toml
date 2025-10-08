@@ -1,0 +1,26 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "regimeshift-threshsolds"
+version = "1.1"
+description = "Regime shift detection algorithm for paleoclimate time-series"
+readme = "README.md"
+license = { file = "LICENSE" }
+requires-python = ">=3.11"
+authors = [{ name = "Nathan Stevenard" }]
+dependencies = [
+  "numpy~=1.26.4",
+  "pandas~=2.1.4",
+  "scipy~=1.16.1",
+  "scikit-learn~=1.5.1",
+  "matplotlib~=3.10.1",
+]
+
+[tool.setuptools]
+packages = ["rsthresh"]
+
+[project.urls]
+Homepage = "https://github.com/NathStevenard/regimeshift-thresholds"
+Issues = "https://github.com/NathStevenard/regimeshift-thresholds/issues"

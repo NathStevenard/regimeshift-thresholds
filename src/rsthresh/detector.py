@@ -3,7 +3,6 @@ import json
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional, Dict, Tuple
-import os
 
 import numpy as np
 import pandas as pd
@@ -12,22 +11,20 @@ from scipy.interpolate import UnivariateSpline
 from scipy.stats import gaussian_kde
 from sklearn.mixture import GaussianMixture
 from scipy.signal import butter, filtfilt
-
 from src.rsthresh._version import __version__
 
-DEFAULT_LEVELS = (0.90, 0.95, 0.99)
+DEFAULT_LEVELS = (0.95, 0.97, 0.99)
 
 # ---- helpers -----------------------------------------------------------
 def _butter_lowpass(y: np.ndarray, dt: float, cutoff_ka: float, order: int = 4) -> np.ndarray:
     """Zero-phase low-pass. cutoff_ka is the desired cutoff period (ka)."""
     if cutoff_ka is None or cutoff_ka <= 0:
         return y
-    fs = 1.0/dt
-    fc = 1.0/cutoff_ka
-    wn = min(max(fc/(0.5*fs), 1e-6), 0.999)
+    fs = 1.0 / dt
+    fc = 1.0 / cutoff_ka
+    wn = min(max(fc / (0.5 * fs), 1e-6), 0.999)
     b, a = butter(order, wn, btype="low")
     return filtfilt(b, a, y, method="gust")
-
 
 def _movavg(y: np.ndarray, dt: float, window_ka: float) -> np.ndarray:
     """Centered moving average (boxcar) with window in ka."""
@@ -39,12 +36,11 @@ def _movavg(y: np.ndarray, dt: float, window_ka: float) -> np.ndarray:
     ker = np.ones(w, dtype=float) / w
     return np.convolve(y, ker, mode="same")
 
-
 # ---- results container -------------------------------------------------------
 @dataclass
 class ThresholdResult:
     transitions: pd.DataFrame            # columns: t, dir, target, x, y, dx_dt, dy_dt
-    kde_grids: Dict[str, Dict[str, np.ndarray]]
+    kde_grids: Dict[str, Dict[str, np.ndarray | tuple[float, ...]]]
     separator_S: float                   # global separator (scalar)
 
 
@@ -66,9 +62,9 @@ class ThresholdDetector:
                  min_delta_sigma: float = 0.9,          # amplitude gate in units of local sigma
                  kde_bandwidth: str | float = "scott",  # short-scale isolation on target (optional)
                  smooth_method: str = "spline",         # "spline" | "lowpass" | "ma"
-                 spline_s: float | str = "auto",  # for "spline": "auto" (=N) or float
-                 lp_cutoff_ka: float = 20.0,            # for "lowpass" (Butterworth): pass > 20 ka
-                 ma_window_ka: float = 10.0,            # for "ma" (moving window average)
+                 spline_s: float | str = "auto",        # for "spline": "auto" (=N) or float
+                 lp_cutoff_ka: float = 12.0,            # for "lowpass" (Butterworth): pass > 12 ka
+                 ma_window_ka: float = 7.0,             # for "ma" (moving window average)
                  impute_method: str = 'linear',         # "linear" | "ffill" | "bfill" | "mean" | "median"
                  output_dir: str | Path = "outputs",    # output path
                  logger: Optional[logging.Logger] = None):
@@ -83,6 +79,8 @@ class ThresholdDetector:
         self.ma_window_ka = ma_window_ka
         self.spline_s = spline_s
         self.impute_method = impute_method
+        self._raw_on_grid: Dict[str, np.ndarray] = {}
+        self._raw_bounds: Dict[str, Tuple[float, float]] = {}
 
         self._persist_pts = 0
         self._separator_S: Optional[float] = None
@@ -91,13 +89,80 @@ class ThresholdDetector:
         self.output_dir.mkdir(parents=True, exist_ok=True)
         self.log = logger or logging.getLogger("rsthresh")
 
-        self.series: Optional[pd.DataFrame] = None     # standardized internal df: age,target,x,y
+        self.series: Optional[pd.DataFrame] = None
         self.results: Optional[ThresholdResult] = None
-        self._spl: Dict[str, UnivariateSpline] = {}    # per-key splines
+        self._spl: Dict[str, UnivariateSpline] = {}
 
-        os.makedirs(f"{output_dir}/Figures", exist_ok=True)
-        os.makedirs(f"{output_dir}/Reports", exist_ok=True)
-        os.makedirs(f"{output_dir}/Results", exist_ok=True)
+        (self.output_dir / "Figures").mkdir(parents=True, exist_ok=True)
+        (self.output_dir / "Reports").mkdir(parents=True, exist_ok=True)
+        (self.output_dir / "Results").mkdir(parents=True, exist_ok=True)
+
+    # -- class helpers ----------------------------------------------------
+
+    def _sample_around(self, key: str, t_evt: float) -> float:
+        """Give the average values of a time-serie around a +/- 3 ka window."""
+        raw_col = f"{key}_raw"
+        if raw_col in self.series.columns:
+            arr = self.series[raw_col].to_numpy()
+        elif hasattr(self, "_raw_on_grid") and key in self._raw_on_grid:
+            arr = self._raw_on_grid[key]
+        else:
+            # use the smoothed data is raw is not available
+            arr = self.series[key].to_numpy()
+
+        age = self.series["age"].to_numpy()
+        dt = float(self.dt_ka)
+
+        # half fixed window = 3 ka
+        half = max(1, int(round(3.0 / dt)))
+
+        # find the nearest index
+        j = int(np.argmin(np.abs(age - t_evt)))
+        i0 = max(0, j - half)
+        i1 = min(len(age) - 1, j + half)
+
+        window = arr[i0:i1 + 1]
+
+        # average the 6 ka window
+        val = float(np.nanmean(window))
+
+        # if all data are NaN
+        if not np.isfinite(val):
+            if hasattr(self, "_spl") and key in self._spl:
+                val = float(self._spl[key](t_evt))
+            else:
+                val = float(arr[j])
+
+        return val
+
+    def _value_at(self, key: str, t_evt: float) -> float:
+        """Give a single value dépending on the smoothing method"""
+        age = self.series["age"].to_numpy()
+        j = int(np.argmin(np.abs(age - t_evt)))
+        m = self.smooth_method.lower()
+
+        if m == "spline":
+            return float(self._spl[key](t_evt))
+        elif m == "ma":
+            return float(self.series[key].to_numpy()[j])
+        elif m == "lowpass":
+            return float(self.series[key].to_numpy()[j])
+        elif m == "none":
+            return float(self.series[f"{key}_raw"].to_numpy()[j])
+        else:
+            return float(self._spl[key](t_evt))
+
+    def _derivative_at(self, key: str, t_evt: float) -> float:
+        """Adjust the derivative function depending on the smoothing method"""
+        m = self.smooth_method.lower()
+        if m == "spline":
+            return float(self._spl[key].derivative(1)(t_evt))
+        age = self.series["age"].to_numpy()
+        y = self.series[key].to_numpy()
+        j = int(np.argmin(np.abs(age - t_evt)))
+        jm1 = max(0, j - 1)
+        jp1 = min(len(age) - 1, j + 1)
+        return float((y[jp1] - y[jm1]) / (2.0 * self.dt_ka))
 
     # -- column mapping & I/O --------------------------------------------------
     def _auto_map_columns(self, df: pd.DataFrame):
@@ -122,70 +187,104 @@ class ThresholdDetector:
 
     # -- preprocessing (resample + optional short-scale isolation + smoothing) --
     def resample_and_smooth(self) -> "ThresholdDetector":
-        assert self.series is not None, "Call load_csv() first."
-        df = self.series
-        age = df["age"].to_numpy()
-        a0, a1 = float(age.min()), float(age.max())
-        grid = np.arange(a0, a1 + self.dt_ka / 2, self.dt_ka)
+        """
+        1) Places the series on a regular grid (dt = self.dt_ka).
+           -> adds *_raw (interpolated, NOT smoothed) for local sampling.
+        2) Smoothes each variable according to self.smooth_method ∈ {“spline”,“lowpass”,‘ma’,“none”}.
+           - “spline”: UnivariateSpline on irregular data, s=self.smooth_s (float or dict per var)
+           - “lowpass”: Butterworth lowpass (order=4, cutoff self.lp_cutoff_ka in ka)
+           - “ma”: centered moving average (window self.ma_window_ka in ka)
+           - “none”: no smoothing (copy of *_raw)
+        3) Fills self.series with: age, target/x/y (smoothed) + target_raw/x_raw/y_raw.
+           Stores self._spl (spline for derivatives if available), self._raw_on_grid, self._raw_bounds.
+        """
+        s_cfg = getattr(self, "smooth_spline_s", None)
+        if s_cfg is None:
+            s_cfg = getattr(self, "smooth_s", None)
+
+        # ------------ cleaning & regular gridding ------------
+        df = (self.series.loc[:, ["age", "target", "x", "y"]]
+              .dropna(subset=["age"])
+              .sort_values("age")
+              .reset_index(drop=True))
+        f = df[~df["age"].duplicated(keep="first")].reset_index(drop=True)
+
+        age_irreg = df["age"].to_numpy(float)
+        if age_irreg.size < 5:
+            raise ValueError("Not enough data to smooth.")
+
+        dt = float(self.dt_ka)
+        gmin, gmax = float(np.nanmin(age_irreg)), float(np.nanmax(age_irreg))
+        grid = np.arange(gmin, gmax + 0.5 * dt, dt, dtype=float)
+        if grid[-1] < gmax:
+            grid = np.append(grid, gmax)
 
         out = {"age": grid}
+        raw_on_grid, raw_bounds = {}, {}
+        self._spl = {}
+
+        # -------- loop ----------
         for key in ["target", "x", "y"]:
-            # Raw serie (if contains NaN)
-            y_raw = df[key].to_numpy()
+            y_src = df[key].to_numpy(float)
+            mask = np.isfinite(y_src)
 
-            if np.isnan(y_raw).any():
-                s = pd.Series(y_raw, index=df["age"].to_numpy())
-                m = self.impute_method.lower()
-                if m == "linear":
-                    s_imp = s.interpolate(method="values", limit_direction="both")
-                elif m == "ffill":
-                    s_imp = s.fillna(method="ffill").fillna(method="bfill")
-                elif m == "bfill":
-                    s_imp = s.fillna(method="bfill").fillna(method="ffill")
-                elif m == "mean":
-                    s_imp = s.fillna(s.mean())
-                elif m == "median":
-                    s_imp = s.fillna(s.median())
+            if self.impute_method == "linear":
+                if mask.sum() >= 2:
+                    y_raw = np.interp(grid, age_irreg[mask], y_src[mask])
                 else:
-                    raise ValueError(f"Unknown impute_method='{self.impute_method}'")
-                y_source = s_imp.to_numpy()
-            else:
-                y_source = y_raw
+                    y_raw = np.interp(grid, age_irreg, np.nan_to_num(y_src, nan=np.nanmedian(y_src)))
+            elif self.impute_method == "ffill":
+                y_f = pd.Series(y_src).ffill().bfill().to_numpy()
+                y_raw = np.interp(grid, age_irreg, y_f)
+            elif self.impute_method == "bfill":
+                y_f = pd.Series(y_src).bfill().ffill().to_numpy()
+                y_raw = np.interp(grid, age_irreg, y_f)
+            elif self.impute_method in ("mean", "median"):
+                fill = np.nanmean(y_src) if self.impute_method == "mean" else np.nanmedian(y_src)
+                y_f = np.where(np.isfinite(y_src), y_src, fill)
+                y_raw = np.interp(grid, age_irreg, y_f)
+            else:  # défaut sûr
+                if mask.sum() >= 2:
+                    y_raw = np.interp(grid, age_irreg[mask], y_src[mask])
+                else:
+                    y_raw = np.interp(grid, age_irreg, np.nan_to_num(y_src, nan=np.nanmedian(y_src)))
 
-            # Resampling on regular grid
-            y = np.interp(grid, age, y_source)
+            raw_on_grid[key] = y_raw
 
-            # smoothing (depending on the method used)
-            if self.smooth_method == "lowpass":
-                y_s = _butter_lowpass(y, dt=self.dt_ka, cutoff_ka=self.lp_cutoff_ka)
-                spl_der = UnivariateSpline(grid, y_s, s=0.0, k=3)       # to produce "clean" dx/dt
+            # robust limits on irregular data
+            qlo, qhi = np.nanquantile(y_src, 0.005), np.nanquantile(y_src, 0.995)
+            raw_bounds[key] = (float(qlo), float(qhi))
 
-            elif self.smooth_method == "ma":
-                y_s = _movavg(y, dt=self.dt_ka, window_ka=self.ma_window_ka)
-                spl_der = UnivariateSpline(grid, y_s, s=0.0, k=3)       # to produce "clean" dx/dt
-
-            elif self.smooth_method == "spline":
+            # ----- smoothing depending on the method -----
+            m = self.smooth_method.lower()
+            if m == "spline":
                 s_val = (len(grid) if str(self.spline_s).lower() == "auto" else float(self.spline_s))
-                spl = UnivariateSpline(grid, y, s=s_val, k=3)
-                y_s = spl(grid)
-                spl_der = spl
-
+                spl = UnivariateSpline(grid, y_raw, s=s_val, k=3)
+                y_smooth = spl(grid)
+                self._spl[key] = spl
+            elif m == "lowpass":
+                y_smooth = _butter_lowpass(y_raw, dt=self.dt_ka, cutoff_ka=self.lp_cutoff_ka)
+                self._spl[key] = UnivariateSpline(grid, y_smooth, s=0.0, k=3)
+            elif m == "ma":
+                y_smooth = _movavg(y_raw, dt=self.dt_ka, window_ka=self.ma_window_ka)
+                self._spl[key] = UnivariateSpline(grid, y_smooth, s=0.0)
+            elif m == "none":
+                y_smooth = y_raw.copy()
+                self._spl[key] = UnivariateSpline(grid, y_smooth, s=0.0)
             else:
-                raise ValueError(f"Unknown smooth_method='{self.smooth_method}'. Choose 'spline'|'lowpass'|'ma'.")
+                raise ValueError(f"unknown smooth_method: {self.smooth_method!r}")
 
-            out[key] = y_s
-            self._spl[key] = spl_der
+            out[key] = y_smooth
 
-        if self.smooth_method == "spline":
-            msg = f"Smoothing=Spline (s={'N' if str(self.spline_s).lower() == 'auto' else self.spline_s})"
-        elif self.smooth_method == "lowpass":
-            msg = f"Smoothing=Low-pass Butterworth (cutoff={self.lp_cutoff_ka} ka)"
-        else:
-            msg = f"Smoothing=Moving average (window={self.ma_window_ka} ka)"
-        self.log.info(msg)
+        # add raw data in the output table
+        out["target_raw"] = raw_on_grid["target"]
+        out["x_raw"] = raw_on_grid["x"]
+        out["y_raw"] = raw_on_grid["y"]
 
         self.series = pd.DataFrame(out)
-        self.log.info(f"Smoothed on {len(grid)} points (dt={self.dt_ka} ka).")
+        self._raw_on_grid = raw_on_grid
+        self._raw_bounds = raw_bounds
+
         return self
 
     # -- separator & persistent state -----------------------------------------
@@ -195,7 +294,6 @@ class ThresholdDetector:
         Methods:
           gmm (default): 2-Gaussian mixture, S = density valley between component means.
           kde: 1D KDE; S = minimum between two highest modes; else median fallback.
-          otsu: histogram Otsu threshold (max inter-class variance).
           quantile: S = quantile(y, q=0.5).
           fixed: S provided by user (kwarg S or self.fixed_separator).
         """
@@ -244,21 +342,7 @@ class ThresholdDetector:
                 S = float(xg[i0 + int(np.argmin(dens[i0:i1 + 1]))])
             else:
                 S = float(np.median(y))
-                self.log.warning("KDE found <2 modes; using median as separator.")
-
-        elif method == "otsu":
-            bins = int(kwargs.get("bins", 128))
-            hist, edges = np.histogram(y, bins=bins, density=False)
-            p = hist.astype(float) / max(1, hist.sum())
-            m = 0.5 * (edges[:-1] + edges[1:])
-            omega = np.cumsum(p)
-            mu = np.cumsum(p * m)
-            mu_t = mu[-1] if len(mu) else 0.0
-            denom = (omega * (1 - omega))
-            denom[denom == 0] = np.nan
-            sigma_b2 = (mu_t * omega - mu) ** 2 / denom
-            k = int(np.nanargmax(sigma_b2))
-            S = float(0.5 * (edges[k] + edges[k + 1]))
+                self.log.warning("KDE found < 2 modes; using median as separator.")
 
         elif method == "quantile":
             q = float(kwargs.get("q", 0.5))
@@ -304,9 +388,8 @@ class ThresholdDetector:
         for idx in crossings:
             i0 = max(0, idx - w); i1 = min(len(df) - 1, idx + w)
             seg = slice(i0, i1 + 1)
-            j = i0 + int(np.argmax(np.abs(d_target[seg])))
+            j = i0 + int(np.argmax(np.abs(d_target[seg])))  # |d(target)/dt| peak
 
-            # local pre/post plateaus
             pre = slice(max(0, j - 8), max(0, j - 1))
             post = slice(j + 1, min(len(df), j + 8))
             if (pre.stop - pre.start) < 2 or (post.stop - post.start) < 2:
@@ -314,22 +397,27 @@ class ThresholdDetector:
             delta = float(np.nanmean(df["target"].to_numpy()[post]) -
                           np.nanmean(df["target"].to_numpy()[pre]))
 
-            # direction in "flow" convention
+            # Transition direction
             delta_flow = -delta
             direction = "up" if delta_flow > 0 else "down"
 
-            # amplitude gate
+            # --- gate amplitude ---
             if abs(delta) < self.min_delta_sigma * float(np.nanmean(sigma_loc[seg])):
                 self.log.debug(f"Rejected transition at age≈{df['age'].iloc[j]:.1f} ka (amplitude too small).")
                 continue
 
-            # read x/y & derivatives at t
-            t = float(df["age"].iloc[j])
-            xv = float(df["x"].iloc[j]); yv = float(df["y"].iloc[j])
-            dx_dt = float(sgn * self._spl["x"].derivative(1)(age)[j])
-            dy_dt = float(sgn * self._spl["y"].derivative(1)(age)[j])
+            # ================== find the dx/dt peak ==================
+            t_peak = float(df["age"].iloc[j])
+            t_evt = t_peak
 
-            rows.append({"t": t, "dir": direction, "target": float(df["target"].iloc[j]),
+            # ================== sampling at t_evt (x,y, derivative) ==================
+            xv = self._sample_around("x", t_evt)
+            yv = self._sample_around("y", t_evt)
+            tgt  = self._value_at("target", t_evt)
+            dx_dt = sgn * self._derivative_at("x", t_evt)
+            dy_dt = sgn * self._derivative_at("y", t_evt)
+
+            rows.append({"t": t_evt, "dir": direction, "target": tgt,
                          "x": xv, "y": yv, "dx_dt": dx_dt, "dy_dt": dy_dt})
 
         trans = pd.DataFrame(rows)
@@ -373,7 +461,7 @@ class ThresholdDetector:
     # -- report ----------------------------------------------------------------
     def save_report(self, path: str | Path | None = None) -> Path:
         assert self.results is not None, "Call detect_transitions() first."
-        path = Path(path or (self.output_dir / "/Reports/threshold_report.json"))
+        path = Path(path) if path else (self.output_dir / "Reports" / "threshold_report.json")
         trans = self.results.transitions
         summary = {
             "version": __version__,

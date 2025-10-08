@@ -33,30 +33,30 @@ All methods have respective parameters.
 Fell free to adjust these parameters if needed, it will be directly adjusted in the pipeline.
 """
 # CHOOSE YOUR METHOD HERE
-smooth_method="spline"          # (str) || "spline" (default) | "lowpass" (low band pass) | "ma" (moving average)
+smooth_method="ma"              # (str) || "spline" (default) | "lowpass" (low band pass) | "ma" (moving average)
 
 # MODIFY SETTINGS DEPENDING ON THE METHOD
 # 1. ~~ Spline settings ~~
 spline_s="auto"                 # (float), (str) || "auto" -> length of the dataset
 
 # 2. ~~ Low band pass settings ~~
-lp_cutoff_ka=20.0               # (float) || change the period as desired
+lp_cutoff_ka=12.0               # (float) || change the period as desired
 
 # 3. ~~ Moving average settings ~~
-ma_window_ka=10.0               # (float) || change the window as desired
+ma_window_ka=7.0                # (float) || change the window as desired
 
 # ------- Additional settings -------
 
 impute_method="linear"          # (str) || "linear" | "ffill" | "bfill" | "mean" | "median". To fill NaN values
-separator="gmm"                 # (str) || "gmm" | "kde" | "otsu" | "quantile" | "fixed"
+separator="gmm"                 # (str) || "gmm" | "kde" | "quantile" | "fixed"
 kde_bandwidth="scott"           # (str), (float) || "scott" | "silverman". Define the kde bandwidth
 
 S=0.0                           # (float) || values for the "fixed" separator
 dt_ka=1.0                       # (float) || step for resampling in ka
 persist_ka=4.0                  # (float) || window in ka of the state persistance filter
 search_window_ka=4.0            # (float) || half of the window around the S crossing to find the max dx/dt
-sigma_window_ka=40.0            # (float) || gate amplitude in ka
-min_delta_sigma=0.9             # (float) || without dimension. Change it from 0.7-1.2 depending on the gate amplitude
+sigma_window_ka=10.0            # (float) || gate amplitude in ka
+min_delta_sigma=0.7             # (float) || without dimension. Change it from 0.7-1.2 depending on the gate amplitude
 
 """
 Other additionnal settings are available, but not necessary. 

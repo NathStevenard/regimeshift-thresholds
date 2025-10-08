@@ -11,13 +11,12 @@ def plot_summary(
     det: ThresholdDetector,
     figpath: str = "outputs/Figures/thresholds_summary.svg",
     levels: Tuple[float, ...] = DEFAULT_LEVELS,   # KDE isodensity levels (density quantiles)
-    figsize: Tuple[float, float] = (7.0, 4.0),    # ~quarter page
+    figsize: Tuple[float, float] = (10.0, 6.0),    # ~quarter page
     width_ratios: Tuple[float, float, float] = (1.0, 1.0, 1.2),
     point_size: int = 22,
     line_width: float = 1.2,
     fontsize: int = 9,
-    invert_age_axis: Optional[bool] = None,
-    show_mode: bool = True,                       # mark KDE mode with a star
+    show_mode: bool = False                       # mark KDE mode with a star
 ) -> plt.Figure:
     """
     Compact 3-panel figure:
@@ -45,7 +44,6 @@ def plot_summary(
     S = det.results.separator_S
     age = df["age"].to_numpy()
 
-    inv = True if invert_age_axis is None else bool(invert_age_axis)
     sgn = -1
     d_target = sgn * det._spl["target"].derivative(1)(age)
 
@@ -63,8 +61,6 @@ def plot_summary(
         axA.axvline(r["t"], color=colors.get(r["dir"], "0.5"), lw=0.9, alpha=0.6)
     axA.set_ylabel(f"{det.labels.get('target','target')} (smoothed)")
     axA.set_title("(a) Regime detection", loc="left", fontsize=fontsize)
-    if inv:
-        axA.invert_xaxis()
     axA.legend(loc="upper right", fontsize=fontsize-2, frameon=False)
 
     # (b) derivative
@@ -72,11 +68,10 @@ def plot_summary(
     axB.plot(df["age"], d_target, lw=line_width)
     for _, r in trans.iterrows():
         axB.axvline(r["t"], color=colors.get(r["dir"], "0.5"), lw=0.9, alpha=0.6)
+    axB.axhline(0, color='k', ls="--", lw=0.5, alpha=0.7)
     axB.set_ylabel(f"d({det.labels.get('target','target')})/dt")
     axB.set_xlabel("Age (ka BP)")
     axB.set_title("(b) Derivative & timing", loc="left", fontsize=fontsize)
-    if inv:
-        axB.invert_xaxis()
 
     # (c) x–y KDE
     axC = fig.add_subplot(gs[:, 2])
@@ -102,6 +97,8 @@ def plot_summary(
 
     axC.set_xlabel(det.labels.get("x", "x"))
     axC.set_ylabel(det.labels.get("y", "y"))
+    axC.yaxis.set_label_position("right")
+    axC.yaxis.tick_right()
     axC.set_title("(c) Threshold windows (KDE isodensity)", loc="left", fontsize=fontsize)
     axC.legend(fontsize=fontsize-2, frameon=False)
 
